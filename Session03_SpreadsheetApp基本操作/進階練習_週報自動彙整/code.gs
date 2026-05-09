@@ -19,7 +19,14 @@ function 建立本週週報() {
     var 週區間 = Utilities.formatDate(週一, "Asia/Taipei", "MMdd") + "-" +
                  Utilities.formatDate(週五, "Asia/Taipei", "MMdd");
 
-    var 部門 = ["業務部", "行銷部", "研發部", "人資部", "財務部"];
+    var 部門 = [];
+    var 部門表 = ss.getSheetByName("部門資料");
+    if (部門表) {
+      var data = 部門表.getRange(2, 1, 部門表.getLastRow() - 1, 1).getValues();
+      部門 = data.map(function(row) { return row[0]; });
+    } else {
+      部門 = ["業務部", "行銷部", "研發部", "人資部", "財務部"];
+    }
 
     部門.forEach(function(部門名) {
       var 表名 = "週報_" + 部門名 + "_" + 週區間;
@@ -96,6 +103,7 @@ function 彙整週報() {
     總覽表.getRange("A2").setValue("彙整時間：" +
       Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy/MM/dd HH:mm"));
 
+    var 未填寫部門 = [];
     var 目前列 = 4;
 
     sheets.forEach(function(sheet) {
@@ -123,6 +131,7 @@ function 彙整週報() {
 
       if (!有資料) {
         總覽表.getRange(目前列, 1).setValue("（尚未填寫）").setFontColor("#999");
+        未填寫部門.push(部門名);
         目前列++;
       }
 
@@ -135,10 +144,15 @@ function 彙整週報() {
       總覽表.setColumnWidth(c, 目前寬度 + 30); // 增加 30 像素緩衝
     }
 
-    SpreadsheetApp.getUi().alert("✅ 週報彙整完成！請查看「週報總覽」工作表。");
+    if (未填寫部門.length > 0) {
+      發送未填寫提醒(未填寫部門);
+    } else {
+      SpreadsheetApp.getUi().alert("✅ 週報彙整完成！所有部門皆已填寫。");
+    }
 
   } catch (錯誤) {
     Logger.log("❌ 錯誤：" + 錯誤.message);
+    SpreadsheetApp.getUi().alert("❌ 彙整時發生錯誤：" + 錯誤.message);
   }
 }
 
@@ -286,9 +300,85 @@ function onOpen() {
     .addItem("📝 新增週報範例資料", "新增週報範例資料")
     .addItem("📊 彙整所有週報", "彙整週報")
     .addSeparator()
+    .addItem("⚙️ 初始化部門資料", "初始化部門資料")
     .addItem("⏰ 設定週一自動建立", "設定週一自動建立")
     .addItem("⏰ 設定週五自動彙整", "設定週五自動彙整")
     .addToUi();
+}
+
+/**
+ * 初始化部門主管資料表
+ */
+function 初始化部門資料() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("部門資料");
+  if (!sheet) {
+    sheet = ss.insertSheet("部門資料");
+    var header = [["部門名稱", "主管姓名", "主管 Email"]];
+    var data = [
+      ["業務部", "張經理", "manager1@example.com"],
+      ["行銷部", "李經理", "manager2@example.com"],
+      ["研發部", "陳主管", "manager3@example.com"],
+      ["人資部", "林主任", "manager4@example.com"],
+      ["財務部", "吳經理", "manager5@example.com"]
+    ];
+    sheet.getRange(1, 1, 1, 3).setValues(header).setBackground("#4285f4").setFontColor("#fff").setFontWeight("bold");
+    sheet.getRange(2, 1, data.length, 3).setValues(data);
+    sheet.autoResizeColumns(1, 3);
+  }
+  SpreadsheetApp.getUi().alert("✅ 部門資料已初始化，請在表中填入真實的 Email。");
+}
+
+/**
+ * 針對未填寫部門發送 Email 提醒（建立草稿）
+ */
+function 發送未填寫提醒(未填寫部門) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var 部門表 = ss.getSheetByName("部門資料");
+  if (!部門表) {
+    SpreadsheetApp.getUi().alert("⚠️ 以下部門尚未填寫：" + 未填寫部門.join("、") + "\n(由於找不到「部門資料」工作表，無法自動建立郵件草稿)");
+    return;
+  }
+  
+  var 部門資料 = 部門表.getDataRange().getValues();
+  var 部門映射 = {};
+  for (var i = 1; i < 部門資料.length; i++) {
+    部門映射[部門資料[i][0]] = {
+      "姓名": 部門資料[i][1],
+      "Email": 部門資料[i][2]
+    };
+  }
+  
+  var 建立草稿數 = 0;
+  未填寫部門.forEach(function(部門名) {
+    var 主管 = 部門映射[部門名];
+    if (主管 && 主管.Email && 主管.Email.indexOf("@") !== -1) {
+      var 主旨 = "【提醒】週報尚未更新 - " + 部門名;
+      var 內容 = 主管.姓名 + " 您好，\n\n系統偵測到您的部門尚未更新本週週報，請在下班前完成填報。謝謝！";
+      GmailApp.createDraft(主管.Email, 主旨, 內容);
+      建立草稿數++;
+    }
+  });
+  
+  var 訊息 = "⚠️ 以下部門尚未填寫週報：\n" + 未填寫部門.join("、") + 
+             "\n\n已自動在您的 Gmail 中建立 " + 建立草稿數 + " 份提醒草稿。";
+  
+  顯示前往Gmail對話框(訊息);
+}
+
+/**
+ * 彈出 HTML 對話框並提供前往 Gmail 的連結
+ */
+function 顯示前往Gmail對話框(訊息) {
+  var html = HtmlService.createHtmlOutput(
+    '<div style="font-family: sans-serif; line-height: 1.6;">' +
+    '<p style="color: #d32f2f; font-weight: bold;">🔔 發現未填寫部門</p>' +
+    '<p>' + 訊息.replace(/\n/g, '<br>') + '</p>' +
+    '<br><button style="background: #4285f4; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;" ' +
+    'onclick="window.open(\'https://mail.google.com/mail/#drafts\', \'_blank\');google.script.host.close();">前往 Gmail 草稿箱</button>' +
+    '</div>'
+  ).setWidth(400).setHeight(250);
+  SpreadsheetApp.getUi().showModalDialog(html, "未填寫提醒系統");
 }
 
 
