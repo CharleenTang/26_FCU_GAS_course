@@ -16,6 +16,7 @@ function 批次驗證客戶資料() {
     SpreadsheetApp.flush();
     var 資料 = sheet.getDataRange().getValues();
     var 驗證結果 = [];
+    var 查詢連結 = [];
     var 問題數 = 0;
     var Email清單 = {};
 
@@ -24,6 +25,7 @@ function 批次驗證客戶資料() {
       var 聯絡人 = String(資料[i][1]).trim();
       var Email = String(資料[i][2]).trim();
       var 電話 = String(資料[i][3]).trim();
+      var 統編 = String(資料[i][4]).trim();
       var 錯誤 = [];
 
       // 檢查必填
@@ -33,6 +35,11 @@ function 批次驗證客戶資料() {
       // 驗證 Email 格式
       if (Email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(Email)) {
         錯誤.push("Email 格式錯誤");
+      }
+
+      // 驗證統編 (8 碼數字)
+      if (統編 && !/^[0-9]{8}$/.test(統編)) {
+        錯誤.push("統編格式錯誤 (須為 8 碼數字)");
       }
 
       // 檢查 Email 重複
@@ -51,12 +58,22 @@ function 批次驗證客戶資料() {
 
       var 狀態 = 錯誤.length === 0 ? "✅ 正常" : "⚠️ " + 錯誤.join("；");
       驗證結果.push([狀態]);
+
+      // 產生一鍵查詢連結 (改用 Google 搜尋以避開政府網站封鎖，搜尋結果更穩定)
+      var 查詢網址 = "https://www.google.com/search?q=" + encodeURIComponent(公司 + " 統編");
+      查詢連結.push(['=HYPERLINK("' + 查詢網址 + '", "🔍 網頁搜尋")']);
       if (錯誤.length > 0) 問題數++;
     }
 
-    // 批次寫入驗證結果到 H 欄
-    sheet.getRange("H1").setValue("驗證結果").setFontWeight("bold");
-    sheet.getRange(2, 8, 驗證結果.length, 1).setValues(驗證結果);
+    // 批次寫入驗證結果與查詢連結
+    sheet.getRange("I1").setValue("驗證結果").setFontWeight("bold");
+    sheet.getRange(2, 9, 驗證結果.length, 1).setValues(驗證結果);
+    
+    sheet.getRange("J1").setValue("快速查詢").setFontWeight("bold");
+    sheet.getRange(2, 10, 查詢連結.length, 1).setFormulas(查詢連結);
+    
+    sheet.autoResizeColumn(9);
+    sheet.autoResizeColumn(10);
 
     // 標示有問題的列（改用批次寫入背景色，效能大幅提升並確保 UI 更新）
     var 背景色 = [];
@@ -196,23 +213,23 @@ function 初始化客戶資料() {
   var sheet = ss.getSheetByName("客戶資料");
   if (!sheet) sheet = ss.insertSheet("客戶資料"); else sheet.clear();
 
-  var 標題 = [["公司名稱", "聯絡人", "Email", "電話", "地區", "產業", "客戶等級"]];
+  var 標題 = [["公司名稱", "聯絡人", "Email", "電話", "統一編號", "地區", "產業", "客戶等級"]];
   var 資料 = [
-    ["台北科技股份有限公司", "王大明", "wang@taipei-tech.com", "0912345678", "台北", "科技業", "A"],
-    ["新竹電子有限公司", "李小華", "LEE@hsinchu.COM", "0923-456-789", "新竹", "電子業", "B"],
-    ["台中製造公司", " 張美玲 ", "chang@taichung-mfg.com", "04-2234-5678", "台中", "製造業", "A"],
-    ["高雄物流", "陳大文", "chen@kaohsiung", "invalid", "高雄", "物流業", "C"],
-    ["花蓮文創工作室", "", "info@hualien-creative.com", "0389-001-234", "花蓮", "文創", "B"],
-    ["桃園光電科技", "黃志偉", "huang@taoyuan-opto.com", "0956789012", "桃園", "光電", "A"],
-    ["基隆貿易商行", "林采潔", "wang@taipei-tech.com", "02-2456-7890", "基隆", "貿易", "C"],
-    ["宜蘭農產公司", "周建國", "chou@yilan-agri.com", "0398765432", "宜蘭", "農業", "B"]
+    ["台北科技股份有限公司", "王大明", "wang@taipei-tech.com", "0912345678", "12345678", "台北", "科技業", "A"],
+    ["新竹電子有限公司", "李小華", "LEE@hsinchu.COM", "0923-456-789", "88888888", "新竹", "電子業", "B"],
+    ["台中製造公司", " 張美玲 ", "chang@taichung-mfg.com", "04-2234-5678", "12345", "台中", "製造業", "A"],
+    ["高雄物流", "陳大文", "chen@kaohsiung", "invalid", "ABC12345", "高雄", "物流業", "C"],
+    ["花蓮文創工作室", "", "info@hualien-creative.com", "0389-001-234", "", "花蓮", "文創", "B"],
+    ["桃園光電科技", "黃志偉", "huang@taoyuan-opto.com", "0956789012", "999999999", "桃園", "光電", "A"],
+    ["基隆貿易商行", "林采潔", "wang@taipei-tech.com", "02-2456-7890", "22222222", "基隆", "貿易", "C"],
+    ["宜蘭農產公司", "周建國", "chou@yilan-agri.com", "0398765432", "33333333", "宜蘭", "農業", "B"]
   ];
 
-  sheet.getRange(1, 1, 1, 7).setValues(標題);
-  sheet.getRange(2, 1, 資料.length, 7).setValues(資料);
-  sheet.getRange("A1:G1").setBackground("#e65100").setFontColor("#fff").setFontWeight("bold");
+  sheet.getRange(1, 1, 1, 8).setValues(標題);
+  sheet.getRange(2, 1, 資料.length, 8).setValues(資料);
+  sheet.getRange("A1:H1").setBackground("#e65100").setFontColor("#fff").setFontWeight("bold");
   sheet.setFrozenRows(1);
-  for (var c = 1; c <= 7; c++) sheet.autoResizeColumn(c);
+  for (var c = 1; c <= 8; c++) sheet.autoResizeColumn(c);
 
   SpreadsheetApp.getUi().alert("✅ 客戶資料已建立（含刻意的錯誤資料供驗證練習）");
 }
