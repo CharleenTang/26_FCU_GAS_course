@@ -188,6 +188,192 @@ function 自動建立月報表() {
   }
 }
 
+/**
+ * 自動建立週報表
+ * 說明：根據目前週數，自動建立該週的工作報表（含標題與隨機工時）
+ */
+function 自動建立週報表() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var 員工表 = ss.getSheetByName("員工資料");
+    
+    if (!員工表) {
+      SpreadsheetApp.getUi().alert("❌ 找不到「員工資料」工作表，請先執行初始化。");
+      return;
+    }
+
+    // 1. 取得員工基本資料 (姓名、部門)
+    var 最後一列 = 員工表.getLastRow();
+    if (最後一列 < 2) {
+      SpreadsheetApp.getUi().alert("⚠️ 員工資料中沒有數據。");
+      return;
+    }
+    var 員工原始資料 = 員工表.getRange(2, 1, 最後一列 - 1, 2).getValues();
+
+    // 2. 計算目前週數、日期區間與準備表名
+    var 今天 = new Date();
+    var 一月一日 = new Date(今天.getFullYear(), 0, 1);
+    var 經過天數 = Math.floor((今天 - 一月一日) / (24 * 60 * 60 * 1000));
+    var 週數 = Math.ceil((經過天數 + 一月一日.getDay() + 1) / 7);
+    var 表名 = 今天.getFullYear() + "年第" + 週數 + "週工作週報";
+
+    // 計算日期區間 (以本週日到週六為準)
+    var 距離週日 = -今天.getDay();
+    var 週日 = new Date(今天);
+    週日.setDate(今天.getDate() + 距離週日);
+    var 週六 = new Date(週日);
+    週六.setDate(週日.getDate() + 6);
+    
+    var 格式化日期 = function(d) { 
+      var 星期幾 = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
+      return Utilities.formatDate(d, "Asia/Taipei", "yyyy/MM/dd") + " (" + 星期幾[d.getDay()] + ")"; 
+    };
+    var 日期區間文字 = "📅 日期區間：" + 格式化日期(週日) + " ~ " + 格式化日期(週六);
+
+    // 檢查工作表是否已存在
+    var 既有表 = ss.getSheetByName(表名);
+    if (既有表) {
+      SpreadsheetApp.getUi().alert("⚠️ 「" + 表名 + "」已存在，請先刪除舊表或更名。");
+      return;
+    }
+
+    var 新表 = ss.insertSheet(表名);
+
+    // 3. 設定日期區間、標題列與格式
+    var 標題 = [["姓名", "部門", "週日", "週一", "週二", "週三", "週四", "週五", "週六", "本週總時數"]];
+    
+    // 寫入日期區間 (第 1 列)
+    新表.getRange(1, 1).setValue(日期區間文字);
+    新表.getRange(1, 1, 1, 10).merge()
+      .setBackground("#f3f3f3")
+      .setFontWeight("bold")
+      .setHorizontalAlignment("center")
+      .setVerticalAlignment("middle");
+
+    // 寫入欄位標題 (第 2 列)
+    新表.getRange(2, 1, 1, 10).setValues(標題);
+    新表.getRange(2, 1, 1, 10)
+      .setBackground("#1a73e8")
+      .setFontColor("#ffffff")
+      .setFontWeight("bold")
+      .setHorizontalAlignment("center");
+
+    // 4. 準備並寫入週報表內容
+    var 報表內容 = [];
+    for (var i = 0; i < 員工原始資料.length; i++) {
+      var 姓名 = 員工原始資料[i][0];
+      var 部門 = 員工原始資料[i][1];
+      
+      // 隨機產生週一至週日的工時 (0~8 小時)
+      var 每日工時 = [];
+      var 總時數 = 0;
+      for (var d = 0; d < 7; d++) {
+        var 時數 = Math.floor(Math.random() * 9); 
+        每日工時.push(時數);
+        總時數 += 時數;
+      }
+      
+      var 每一列 = [姓名, 部門].concat(每日工時).concat([總時數]);
+      報表內容.push(每一列);
+    }
+
+    // 寫入所有資料 (從第 3 列開始)
+    新表.getRange(3, 1, 報表內容.length, 10).setValues(報表內容);
+
+    // 5. 最後修飾
+    新表.setFrozenRows(2); // 凍結前兩列 (日期區間與標題)
+    for (var j = 1; j <= 10; j++) {
+      新表.autoResizeColumn(j);
+      var 目前寬度 = 新表.getColumnWidth(j);
+      新表.setColumnWidth(j, 目前寬度 + 20);
+    }
+
+    Logger.log("✅ 「" + 表名 + "」建立完成。");
+    SpreadsheetApp.getUi().alert("✅ 「" + 表名 + "」建立完成！");
+
+    // --- 新增：同步更新月度彙整 ---
+    更新月度加班彙整(報表內容, "W" + 週數);
+
+  } catch (錯誤) {
+    Logger.log("❌ 錯誤：" + 錯誤.message);
+    SpreadsheetApp.getUi().alert("❌ 錯誤：" + 錯誤.message);
+  }
+}
+
+/**
+ * 更新月度加班彙整
+ * 說明：將週報表的工時資料自動彙整到當月的總表中
+ * @param {Array} 報表內容 週報表的資料陣列
+ * @param {string} 週數文字 週數代碼，例如 "W19"
+ */
+function 更新月度加班彙整(報表內容, 週數文字) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var 今天 = new Date();
+    var 月份表名 = 今天.getFullYear() + "年" + (今天.getMonth() + 1) + "月加班工時彙整";
+    
+    var 月總表 = ss.getSheetByName(月份表名);
+    
+    // 1. 如果月總表不存在，初始化它
+    if (!月總表) {
+      月總表 = ss.insertSheet(月份表名);
+      var 員工表 = ss.getSheetByName("員工資料");
+      if (!員工表) return;
+      
+      var 最後一列 = 員工表.getLastRow();
+      if (最後一列 < 2) return;
+      
+      var 員工名單 = 員工表.getRange(2, 1, 最後一列 - 1, 2).getValues();
+      
+      // 設定初始標題與名單
+      月總表.getRange(1, 1, 1, 2).setValues([["姓名", "部門"]]);
+      月總表.getRange(2, 1, 員工名單.length, 2).setValues(員工名單);
+      
+      // 格式化
+      月總表.getRange("A1:B1").setBackground("#fbbc04").setFontWeight("bold").setHorizontalAlignment("center");
+      月總表.setFrozenRows(1);
+      月總表.setFrozenColumns(2);
+    }
+    
+    // 2. 尋找或新增週數標題 (例如 W19)
+    var 最後一欄 = 月總表.getLastColumn();
+    var 標題行 = 月總表.getRange(1, 1, 1, 最後一欄).getValues()[0];
+    var 週數欄位 = 標題行.indexOf(週數文字) + 1;
+    
+    if (週數欄位 === 0) {
+      週數欄位 = 最後一欄 + 1;
+      月總表.getRange(1, 週數欄位).setValue(週數文字);
+      月總表.getRange(1, 週數欄位).setBackground("#fbbc04").setFontWeight("bold").setHorizontalAlignment("center");
+    }
+    
+    // 3. 建立姓名到列號的映射
+    var 姓名資料 = 月總表.getRange(1, 1, 月總表.getLastRow(), 1).getValues();
+    var 姓名映射 = {};
+    for (var r = 1; r < 姓名資料.length; r++) {
+      if (姓名資料[r][0]) {
+        姓名映射[姓名資料[r][0]] = r + 1;
+      }
+    }
+    
+    // 4. 將週報資料寫入對應的週數欄位
+    for (var i = 0; i < 報表內容.length; i++) {
+      var 姓名 = 報表內容[i][0];
+      var 總工時 = 報表內容[i][9]; // 週報表中「本週總時數」在第 10 欄 (index 9)
+      
+      var 目標列 = 姓名映射[姓名];
+      if (目標列) {
+        月總表.getRange(目標列, 週數欄位).setValue(總工時);
+      }
+    }
+    
+    月總表.autoResizeColumn(週數欄位);
+    Logger.log("✅ 月度加班彙整更新成功：" + 週數文字);
+
+  } catch (錯誤) {
+    Logger.log("❌ 更新月度彙整失敗：" + 錯誤.message);
+  }
+}
+
 // ============================================================
 // 第三部分：讀寫儲存格
 // ============================================================
@@ -466,6 +652,7 @@ function onOpen() {
     .addItem("📝 讀寫儲存格示範", "讀寫儲存格示範")
     .addSeparator()
     .addItem("📅 建立當月報表", "自動建立月報表")
+    .addItem("📅 建立週報表", "自動建立週報表")
     .addItem("⏰ 設定每日觸發器", "設定每日觸發器")
     .addItem("🗑️ 刪除所有觸發器", "刪除所有觸發器")
     .addToUi();
